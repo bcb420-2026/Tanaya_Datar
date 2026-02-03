@@ -1,0 +1,41 @@
+# ======================
+# OS / system junk
+# ======================
+.DS_Store
+*/.DS_Store
+
+# Docker / Linux home dirs accidentally created
+.cache/
+.config/
+.local/
+
+# ======================
+# R / RStudio
+# ======================
+.Rhistory
+.RData
+.Rproj.user/
+
+# Bookdown outputs
+_book/
+_bookdown_files/
+# in_class_exercises/id_mapping/docs/    <-- KEEP docs folder ignored (generated HTML), but source Rmd files are outside it
+
+
+# ======================
+# Identifier mapping exercise – generated files
+# ======================
+in_class_exercises/id_mapping/data/
+in_class_exercises/id_mapping/*.rds
+
+# ======================
+# Other exercises
+# ======================
+in_class_exercises/using_geometadb/GEOmetadb.sqlite
+
+# ======================
+# Homework artifacts
+# ======================
+HW2/.config/
+HW2/.local/
+HW2/terminal_history.txt

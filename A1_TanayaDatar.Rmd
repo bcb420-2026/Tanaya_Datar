@@ -1,0 +1,1246 @@
+---
+title: "BCB420H1 Assignment 1"
+subtitle: "Data Analysis of Bulk RNA-Sequencing Data from BMP7-Treated Medulloblastoma Cells"
+author: "Tanaya Datar"
+date: "02-10-2026"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_float: true
+    number_sections: true
+    theme: flatly
+    highlight: tango
+    fig_caption: true
+    df_print: paged 
+    code_folding: hide
+bibliography: A1_TanayaDatarReferences.bib
+nocite: '@*'
+link-citations: true
+---
+# Introduction
+
+Medulloblastoma (MB) is a pediatric brain cancer with around 5 cases per 1 million individuals [@cooney2023], occurring due to oncogenic events perturbing the development and differentiation of cerebellar progenitor cells. Bone morphogenetic protein (BMP) plays an important role in cellular differentiation, and has been previously linked to contributing to the development of medulloblastoma. However the exact role that BMP plays clinically and mechanistically in the development of this disease is unknown. 
+
+Ohata et al. aimed to explore the mechanisms of the BMP pathways that contribute to the development of medulloblastoma. To investigate this, Ohata et al, performed a bulk RNA-seq experiment designed to identify differences in gene expression in medulloblastoma cell lines (CHLA01, CHLA01R, MB002, and D425) treated with BMP7 ligand for 72 hours and compared them to PBS-treated controls [@ohata2025].
+
+In this assignment, I analyzed the work of Ohata et. al by examining their bulk RNA-sequencing data to investigate the expression patterns of genes in BMP-treated medulloblastoma cells.
+
+# Dataset Overview
+
+## Selecting an appropriate dataset
+
+I am interested in cancer research, specifically brain cancers, which is why medulloblastoma was an area of interest. Additionally, I have worked with scRNA-seq data of medulloblastoma, and bulk-RNA seq data for other organisms like _Drosophila melanogaster_, so this was a opportunity to apply my knowledge of bulk RNA-seq on cancer data.
+
+[GSE229150](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE229150) fit all of my requirements, that I wanted for my dataset: 
+
+* It was bulk-RNA seq.
+
+* The paper was published on Mar 28, 2025, and the dataset was available in 2023. 
+
+* The paper uses Illumina NovaSeq 6000 which is a state of the art whole transcriptome sequencing platform. Additionally, the dataset had great coverage, with more than 50,000 genes.
+
+* This dataset deals with Homo sapiens species only.
+
+* This dataset has 3 biological replicates per condition.
+
+Additionally, the paper investigates interesting questions such as investigating cancer stem cell capacity, cell death and a positive feedback loop mechanism of BMP, which also contributed to choosing this dataset  [@ohata2025].
+
+To learn more about my data selection approach, view my [Journal Entry](https://github.com/bcb420-2026/Tanaya_Datar/wiki/A1-Dataset-Selection).
+
+## Experimental Design
+
+* **GEO Accession:** [GSE229150](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE229150)
+* **Publication:** [The transcription factor LHX2 mediates and enhances oncogenic BMP signaling in medulloblastoma](https://www.nature.com/articles/s41418-025-01488-6)
+* **Experimental Design**
+  * A total of 30 samples were used across multiple comparisons:
+    * **Cell Lines:** CHLA01, CHLA01R, MB002, and D425 (medulloblastoma cell lines)
+    * **Main comparison (24 samples):**
+      * **Condition:** BMP7 treatment vs. PBS control for each cell line with three replicates each
+      * **Condition:** BMP7 ligand added to growth medium for 72 hours
+      * **Control:** PBS-treated cells
+      * **Samples:** 3 CHLA01-BMP, 3 CHLA01-Control, 3 CHLA01R-BMP, 3 CHLA01R-Control,  
+        3 MB002-BMP, 3 MB002-Control, 3 D425-BMP, 3 D425-Control
+        
+  
+    * **Additional comparison (6 samples):**
+    
+      * **Condition:** LDN (BMP signaling inhibitor) treatment
+      * **Control:** DMSO-treated cells
+      * **Samples:** 3 CHLA01R-LDN, 3 CHLA01R-DMSO
+      
+# Dataset Curation
+
+## Loading Libraries
+
+To begin our analysis, we must first load all relevant libraries that we will use to process and analyze our dataset. The `GEOquery` [@geoquery] package will be used to retrieve our dataset of interest and additional information from the GEO database. `edgeR` [@edger] package will be used to apply normalization on the dataset. `biomaRt`[@biomart] package will be used to map ENSEMBL IDs to their respective HGNC symbols. `dplyr`[@dplyr] and `tidyverse`[@tidyverse] packages will be used for data manipulation. `ggplot2`[@ggplot2] package will be used to generate box plots and density plots. `ggrepel`[@ggrepel] package will be used for non-overlapping gene labels in plots, and `pheatmap`[@pheatmap] package will be used for heatmap visualization.
+
+```{r, message=FALSE, warning=FALSE, error=FALSE, results='hide'}
+
+# Install packages
+if (!requireNamespace("BiocManager", quietly = TRUE))
+  install.packages("BiocManager")
+if (!requireNamespace("tidyverse", quietly = TRUE))
+  install.packages("tidyverse")
+
+# Loading required libraries
+library(GEOquery)
+library(edgeR)
+library(biomaRt)
+library(dplyr)
+library(ggplot2)
+library(tidyverse)
+library(ggrepel)
+library(pheatmap)
+```
+
+## Dataset Summary
+
+Let us examine the summary of our dataset [GSE229150](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE229150).
+
+```{r, message=FALSE, warning=FALSE}
+# Retrieve data from GEO(Gene Expression Omnibus)
+gse <- GEOquery::getGEO("GSE229150", GSEMatrix = TRUE)
+
+# Extracting the object from the list
+gse <- gse[[1]]
+
+# Viewing the summary
+experimentData(gse)@abstract 
+```
+This confirms we are querying the right dataset, and investigating the right question, which is the role of BMP stimulation on the oncogenic capacity of medulloblastoma cells.
+
+## Dataset Compilation
+
+The [GSE229150](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE229150) dataset was obtained from the Gene Expression Omnibus (GEO) 
+database using the GEOquery [@geoquery] Bioconductor package. 
+The raw data consisted of 30 individual feature count output files (one per sample) compressed in the GSE229150_RAW.tar archive, instead of one unified count matrix. Each file contained gene-level read counts for 66,023 annotated genes quantified against the human reference genome GRCh38. 
+
+In order to obtain one unified count matrix across all samples, I collated all 30 files by:
+
+1. Reading each feature counts file to extract the count column
+2. Verifying gene identifier (ENSEMBL ID) consistency across samples
+3. Combining count columns into a single data frame with genes as rows and samples as columns
+
+This collation process transformed 30 separate files into a 66,023 × 30 count matrix, with ENSEMBL gene IDs and gene symbols from the original dataset.
+
+
+Let us start by understanding the structure of these individual sample files, by looking at its columns and dimensions.
+
+```{r, message=FALSE, warning=FALSE, results='hide'}
+
+# Querying our dataset of interest.
+gse <- GEOquery::getGEO("GSE229150", GSEMatrix = TRUE)
+
+# Accessing each individual file in the .raw
+GEOquery::getGEOSuppFiles("GSE229150")
+
+# Untar the RAW file
+untar("./GSE229150/GSE229150_RAW.tar", exdir = "./GSE229150")
+
+# Check each sample name matches the test conditions
+files <- list.files("./GSE229150", pattern = "\\.txt|\\.gz", full.names = TRUE)
+
+# Reading in one sample file
+first_file <- read.table(gzfile("./GSE229150/GSM7155987_UG-3028-CHLA01-BMP1Aligned.sortedByCoord.out_gene.featureCounts.txt.gz"), 
+                      header = TRUE, 
+                      sep = "\t")
+
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Investigating the structure of these files:
+colnames(first_file)
+dim(first_file)
+```
+
+
+In order to collate these samples, I then created a base data frame and  looped over each of the 30 files, to systematically add each count column.
+Our collation process results in the final object called count_matrix.
+
+Let us view the structure, column names and dimensions of the final object count_matrix:
+
+```{r, message=FALSE, warning=FALSE}
+
+# Initialize our base count_matrix and keep the original ENSEMBL IDs and HGNC symbols
+count_matrix <- data.frame(
+    Geneid = first_file$Geneid,
+    gene_name = first_file$gene_name
+)
+
+# Looping over each file
+for (i in 1:length(files)) {
+    
+    # Read each file
+    temp <- read.table(
+        gzfile(files[i]),
+        header = TRUE,
+        sep = "\t",
+        comment.char = "#"
+    )
+    
+    # Extract sample name - ONLY the GEO name
+    sample_name <- sub("_.*", "", basename(files[i]))
+    
+    # Add counts column to the dataframe
+    count_matrix[[sample_name]] <- temp[, ncol(temp)]    
+}
+head(count_matrix)
+```
+
+**Table 1. Collated gene expression count matrix. Each row represents a gene (with ENSEMBL ID and HGNC symbol), and each column corresponds to counts from one of the 30 GEO samples.**
+
+*This code was inspired by the notebook BCB420: "Finding Expression Data with GEOmetadb" rendered notebook [@professor_notebooks].*
+
+```{r, message=FALSE, warning=FALSE}
+colnames(count_matrix)
+dim(count_matrix)
+```
+
+This dataset contains 66,023 genes, and has 32 columns: 30 samples and 2 columns for ENSEMBL IDs and Gene Symbols.
+
+## Generating associated metadata
+
+In order to map each sample with its corresponding treatment condition, I generated a metadata table, from the sample file names.
+
+Below, we see the associated metadata table, its column names and dimensions.
+```{r, message=FALSE, warning=FALSE}
+
+# Extracting the names of the files
+file_base <- basename(files)
+
+# Extract GEO ID and getting rid of the extra text
+geo_id <- sub("_.*", "", file_base)
+
+# Remove GEO ID and underscore
+rest <- sub("^[^_]+_", "", file_base)
+
+# Remove suffix
+rest <- sub("Aligned.sortedByCoord.out_gene.featureCounts.txt.gz$", "", rest)
+
+# Split by "-"
+split_info <- strsplit(rest, "-")
+
+# Extract cell line
+cell_line <- sapply(split_info, function(x) {
+  # Cell line is the last element before the condition
+  # Last element is the condition (BMP1/Cont1/DMSO1)
+  x[length(x)-1]
+})
+
+# Extract treatment condition
+condition <- sapply(split_info, function(x) {
+  # Condition is always the last element
+  x[length(x)]
+})
+
+# Building  metadata table
+metadata <- data.frame(
+  GEO_ID = geo_id,
+  cell_line = cell_line,
+  condition = condition,
+  file = files,
+  stringsAsFactors = FALSE
+)
+
+# Strip trailing numbers from condition; We want to group BMP1,BMP2, and BMP3 together.
+metadata$condition <- sub("[0-9]+$", "", metadata$condition)
+
+# View the metadata
+metadata
+```
+
+**Table 2. Sample metadata table linking each GEO sample to its corresponding cell line and treatment condition, extracted from file names and standardized for downstream analysis.**
+
+```{r, message=FALSE, warning=FALSE}
+dim(metadata)
+colnames(metadata)
+```
+
+To learn more about my data collation approach, view my [Journal Entry](https://github.com/bcb420-2026/Tanaya_Datar/wiki/A1-Dataset-Curation).
+
+# Dataset Cleaning
+## Removing Low Read Counts
+
+Let us analyze some statistics (metrics of mean, median, min, max, 1st quartile, 3rd quartile) to assess data quality:
+
+```{r, message=FALSE, warning=FALSE}
+
+# Analyzing metrics of mean, median, min, max, 1st quartile, 3rd quartile using the summary function.
+
+# Do not include the HGNC symbols and ENSEMBL IDs
+only_counts <- count_matrix[, -c(1,2)]
+count_stats <- sapply(only_counts, summary)
+
+# Converting it to a dataframe for easier viewing:
+count_stats_df <- as.data.frame(count_stats)
+
+# View results
+count_stats_df
+
+```
+
+**Table 3. Summary statistics of gene expression counts across all samples, showing minimum, 1st quartile, median, mean, 3rd quartile, and maximum values to assess data quality.**
+
+**INFERENCE:**
+
+The summary statistics show that the median read count across all 30 samples is 0. This indicates that 50% of genes have zero counts. Such low-count genes are likely uninformative and it is recommended to filter these genes out before downstream analysis. Additionally, pre-filtering can reduce memory size of the data object, increase speed of further downstream analyses, and improve visualizations of data[@deseq_vignette].
+
+If we analyze our treatment conditions, we see the following grouping:
+```{r, message=FALSE, warning=FALSE}
+
+table(metadata$condition)
+
+```
+
+**INFERENCE:**
+
+The dataset contains 12 samples each in the BMP and Control conditions, and 3 samples each in the DMSO and LDN conditions. Using edgeR [@edger], we will only keep genes expressed above 1 CPM (Counts per million) in at least 3 samples, as 3 is the smallest condition group (DMSO or LDN). Keeping the threshold as 1 CPM removes lowly expressed genes that may reflect background noise rather than true signal. Additionally, keeping the sample limit as 3 ensures that genes with potentially meaningful expression are not inadvertently removed.
+
+```{r, message=FALSE, warning=FALSE}
+
+# For easier analysis, let us assign the rownames as ENSEMBL IDs. 
+rownames(only_counts) <- count_matrix$Geneid
+
+# Calculate CPM to account for library sizes
+cpm_counts <-  edgeR::cpm(only_counts)
+# Defining our smallest group
+min_samples <- 3
+# Keep genes expressed only above 1 CPM in at least 3 samples
+keep <- rowSums(cpm_counts > 1) >= min_samples
+# Subset the original count matrix to keep only those genes
+filtered_counts <- only_counts[keep, ]
+
+```
+*This code was inspired by [@bioconductorforum] and BCB420: Computational Systems Biology Lectures [@professor_lectures].*
+
+Now, let us re-analyze our dataset statistics post filtering:
+
+```{r, message=FALSE, warning=FALSE}
+
+# Testing summary statistics again
+count_stats_post_filtering <- sapply(filtered_counts, summary)
+
+# Converting it to a dataframe for easier viewing:
+count_stats_post_filtering_df <- as.data.frame(count_stats_post_filtering)
+
+# View the results post filtering
+count_stats_post_filtering_df
+
+```
+
+**Table 4. Summary statistics of the filtered gene expression matrix, showing minimum, 1st quartile, median, mean, 3rd quartile, and maximum values after removing lowly expressed genes to evaluate the effect of filtering on data distribution.**
+
+**INFERENCE:**
+
+The post-filtering summary statistics show that median read counts have substantially increased across samples, with 50% of genes now having median values ~200. This indicates that low-count genes, which previously contributed read counts of zero, have been effectively removed resulting in a dataset enriched for genes with possibly meaningful expression.
+
+
+Let us reassess our coverage:
+```{r, message=FALSE, warning=FALSE}
+
+dim(filtered_counts)
+```
+This has reduced our genes from 66,023 genes to 17,517 genes.
+
+## Identifier Mapping
+
+Our original dataset is already mapped with HGNC symbols, however as mappings can be one-to-many and with new ENSEMBL/HGNC and genome build releases, these mappings can change [@professor_notebooks].
+
+Let us analyze our dataset first for duplicates:
+
+```{r, message=FALSE, warning=FALSE}
+
+# Extract the HGNC gene names of the filtered counts from the paper's original dataset
+filtered_gene_names <- count_matrix$gene_name[match(rownames(filtered_counts), count_matrix$Geneid)]
+
+# Test if any duplicates exist
+any(duplicated(filtered_gene_names))
+length(which(duplicated(filtered_gene_names)))
+```
+**INFERENCE:**
+
+The original mapping has 37 duplicates of HGNC symbols.
+
+
+Let us try to perform identifier mapping on our dataset using the current biomaRt database, and see if duplicate numbers improve.
+
+```{r, message=FALSE, warning=FALSE}
+
+# Loading the correct database with increased timeout
+ensembl <- biomaRt::useMart("ensembl", 
+                            host = "https://www.ensembl.org")
+
+# We want to query for human genes only
+ensembl <- biomaRt::useDataset("hsapiens_gene_ensembl", mart = ensembl)
+
+# Increasing timeout to prevent connection errors which I got during knitting
+options(timeout = 300)
+
+# Stripping off the version number
+strip_ensembl_version <- function(x) sub("\\..*$", "", x)
+
+# Get ENSEMBL IDs from the rownames
+ids <- rownames(filtered_counts)
+ids_clean <- strip_ensembl_version(ids)
+
+# Map each ENSEMBL ID to its corresponding HGNC symbol
+map <- biomaRt::getBM(
+  attributes = c("ensembl_gene_id", "hgnc_symbol"),
+  filters = "ensembl_gene_id",
+  values = ids_clean,
+  mart = ensembl
+)
+
+# A view of the mapping
+head(map)
+
+```
+
+**Table 5. Mapping of ENSEMBL gene IDs to HGNC symbols using the current Ensembl biomaRt database, showing a subset of results which help to assess the resolution of duplicate gene symbols in the dataset.**
+
+*This code was inspired by BCB420: "Identifier Mapping" rendered notebook [@professor_notebooks].*
+
+
+Let us now compare our mapping to the original mapping done by the paper.
+
+The number of ENSEMBL IDs we wanted to map:
+```{r, message=FALSE, warning=FALSE}
+# Check mapping coverage
+
+# Number of ENSEMBL IDs they tried to match
+length(ids_clean)
+
+```
+
+The number of ENSEMBL IDs we were able to map:
+
+```{r, message=FALSE, warning=FALSE}
+# Number of IDs successfully mapped
+nrow(map)
+
+```
+
+The number of ENSEMBL IDs we failed to to map:
+
+```{r, message=FALSE, warning=FALSE}
+length(ids_clean) - nrow(map)
+
+```
+
+**INFERENCE:**
+
+355 ENSEMBL IDs could not be mapped based on the current database.
+As mentioned before, ENSEMBL IDs are tied and versioned to specific genome builds and annotation releases. This dataset was released in 2023, meaning these annotations are relevant to those ENSEMBL IDs of the database before 2023. With new releases and deprecated gene models, genes can be reannotated or removed, leading to ENSEMBL IDs no longer having a corresponding HGNC symbol, which were previously considered valid [@professor_lectures].
+
+As the number is large, I will use the original mapping done by the paper. 
+
+## Handling Duplicates
+
+Let us investigate those 37 duplicates in the original mapping.
+These are the names of the duplicated HGNC symbols.
+
+```{r, message=FALSE, warning=FALSE}
+
+#Names of genes that are duplicated HGNC symbols
+unique_duplicated_genes <- unique(filtered_gene_names[which(duplicated(filtered_gene_names))])
+
+# List of duplicated gene symbols
+unique_duplicated_genes
+
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Number of duplicates
+length(unique_duplicated_genes)
+```
+
+There are 25 unique duplicated HGNC symbols. Let us investigate the roles of these proteins, by querying biomaRt [@biomart].
+
+```{r}
+# Connecting to Ensembl
+ensembl <- useEnsembl(biomart = "genes", dataset = "hsapiens_gene_ensembl")
+
+# Genes to examine
+genes_to_check <- c(
+  "CROCCP2", "U1", "RGS5", "ZNF670",
+  "WASH7P", "Metazoa_SRP", "Y_RNA", "SNORA79",
+  "PKD1P6", "PAGR1", "C2orf15", "CBS",
+  "DGCR6", "uc_338", "SNORD19", "SNORD63",
+  "SNORA74", "MATR3", "SOGA3", "SNORA22",
+  "U3", "RPL41", "PGM5-AS1", "SNORA11",
+  "IDS"
+)
+
+# Query gene biotypes
+gene_info <- biomaRt::getBM(
+  attributes = c("external_gene_name", "gene_biotype"),
+  filters = "external_gene_name",
+  values = genes_to_check,
+  mart = ensembl
+)
+
+# View their information
+gene_info
+
+
+```
+
+**Table 6. Biotype classification of 25 genes with duplicated HGNC symbols, retrieved from Ensembl via biomaRt, highlighting their roles as protein-coding genes, pseudogenes, long non-coding RNAs, or small nucleolar RNAs.**
+
+*This code was inspired by BCB420: "Finding Expression Data with GEOmetadb" rendered notebook [@professor_notebooks].*
+
+**INFERENCE:**
+
+U1, U3, Y_RNA, SNORA79, SNORD19, SNORD63, SNORA74, SNORA22, SNORA11, WASH7P, PKD1P6, uc_338, SOGA3, C2orf15, PGM5-AS1, CROCCP2, Metazoa_SRP, and RPL41 genes are either small RNAs, pseudogenes, non-coding RNAs or ribosomal proteins.
+As these genes are unlikely to play a role in the development of medulloblastoma, and will unlikely impact our analysis, let us filter them out from our dataset.
+
+```{r, message=FALSE, warning=FALSE}
+
+# Adding gene column to filtered_counts
+filtered_counts$HGNC_symbol <- filtered_gene_names
+
+# Defining genes to remove completely
+genes_to_remove <- c(
+  "CROCCP2", "U1", "WASH7P", "Metazoa_SRP", "Y_RNA", "SNORA79",
+  "PKD1P6", "C2orf15", "uc_338", "SNORD19", "SNORD63",
+  "SNORA74", "SOGA3", "SNORA22",
+  "U3", "RPL41", "PGM5-AS1", "SNORA11")
+
+
+# Removing those genes
+counts_pseudo_removed <- filtered_counts[!filtered_counts$HGNC_symbol %in% genes_to_remove, ]
+
+# Coverage of Dataset
+dim(counts_pseudo_removed)
+```
+
+There are now 17,469 genes.
+
+RGS5, ZNF670, PAGR1, CBS, DGCR6, MATR3, IDS genes are considered to have important roles in development. As these proteins can be possibly involved in cancer development and regulation, I decided not to filter them out. 
+Let us analyze the expression of a certain duplicated gene MATR3.
+
+```{r, message=FALSE, warning=FALSE}
+
+# Subset for a specific protein of interest
+subset_df <- counts_pseudo_removed[counts_pseudo_removed$HGNC_symbol == "MATR3", ]
+
+# View the subsetted data frame
+subset_df
+```
+
+**Table 7. Expression values of the gene MATR3 across all samples, retained due to its potential developmental and cancer-related roles**
+
+**INFERENCE:**
+
+The read counts for the gene MATR3 are highly similar across duplicated entries within each sample (e.g., 587 vs. 574 in sample GSM7155987), indicating consistent expression measurements. Given this concordance, averaging the duplicated values per sample is an appropriate approach to obtain a single representative expression value for MATR3.
+
+
+We obtain our final count data with no duplicates:
+```{r, message=FALSE, warning=FALSE}
+
+# Wrote a function to generate our final count data
+
+mutate_mean_expr <- function(df, gene_col, expr_cols = NULL) {
+  # When null, it selects all non-gene-symbol columns as numeric expression columns
+  if (is.null(expr_cols)) {
+    expr_cols <- setdiff(colnames(df), gene_col)
+  }
+  
+  # Ensure expression columns are numeric
+  df[expr_cols] <- lapply(df[expr_cols], as.numeric)
+  
+  # Collapse duplicates using library dplyr
+  collapsed_df <- df %>%
+    # Group by gene symbol
+     group_by(across(all_of(gene_col))) %>%  
+    # Average numeric columns
+    summarise(across(all_of(expr_cols), mean), .groups = "drop") %>% 
+    as.data.frame()
+  
+  # Set rownames as gene symbols and remove the column
+  rownames(collapsed_df) <- collapsed_df[[gene_col]]
+  collapsed_df[[gene_col]] <- NULL
+  
+  return(collapsed_df)
+}
+
+# Calling that function for our dataset
+final_mapped_counts <- mutate_mean_expr(
+  df = counts_pseudo_removed,
+  gene_col = "HGNC_symbol"
+)
+
+# View the final data
+head(final_mapped_counts)
+
+```
+
+**Table 8. Final gene expression count matrix with duplicates removed by averaging expression values across repeated HGNC symbols.**
+
+To learn more about my function writing approach, view my [Journal Entry](https://github.com/bcb420-2026/Tanaya_Datar/wiki/A1-Progress-Updates).
+
+Let us check if our function worked correctly by analyzing the values.
+
+```{r, message=FALSE, warning=FALSE}
+
+# Subset for a specific protein of interest
+subset_MATR3 <- final_mapped_counts[rownames(final_mapped_counts)== "MATR3",]
+
+# View the subsetted data frame
+subset_MATR3
+```
+
+**Table 9. Expression values of MATR3 after collapsing duplicates, confirming that the final count matrix correctly averages repeated entries for each gene.**
+
+**INFERENCE:**
+
+From Table 7, we see that GSM7155987 had read counts of 587 and 574 for gene MATR3.Now, we see only one row for MATR3, with a read count of 580.5, which is a average of the values 587 and 574.
+
+
+Let us investigate if our identifier mapping is complete.
+
+How many genes did we have originally before mapping?
+```{r, message=FALSE, warning=FALSE}
+
+# Check if this worked
+
+# How many genes did we have originally?
+nrow(filtered_counts)
+
+```
+How many genes do we have now after removing duplicates?
+
+```{r, message=FALSE, warning=FALSE}
+# How many genes do we have now?
+nrow(final_mapped_counts)
+
+```
+
+Are there any duplicated genes in our mapped dataset?
+```{r, message=FALSE, warning=FALSE}
+# Are there any duplicated genes left?
+any(duplicated(rownames(final_mapped_counts)))
+
+
+```
+
+**INFERENCE:**
+
+These results verify that we do not have any duplicates with a great coverage of 17462 genes, and have successfully completed Identifier Mapping.
+
+## Outlier Detection
+Although low-expression genes were filtered, outliers may still be present due to technical variation or genuinely high gene expression [@professor_lectures]. The [paper](https://www.nature.com/articles/s41418-025-01488-6) associated with our dataset, claims that there are no outliers present. Let us confirm this.
+
+To identify potential outliers in the dataset, let us apply the following workflow:
+
+1. Using library edgeR to normalize this dataset (TMM method)
+2. Plot a PCA plot
+3. Plot a MDS plot
+4. Detect outliers
+
+Let us first normalize this dataset using edgeR [@edger] by performing log normalization.
+
+```{r, message=FALSE, warning=FALSE}
+
+# Create DGEList object
+dge <- edgeR::DGEList(counts = final_mapped_counts)
+
+# Calculate normalization factors (TMM method)
+dge <- edgeR::calcNormFactors(dge, method = "TMM")
+
+# Calculate log-CPM values
+logcpm <- edgeR::cpm(dge, log = TRUE, prior.count = 1)
+```
+*This code was inspired by BCB420: Computational Systems Biology Lectures  [@professor_lectures].*
+
+## Generating PCA plot
+
+Now let us use this normalized data to generate a PCA plot. A PCA plot will allow us to see our samples labeled by conditions and possibly detect outliers.
+
+In our dataset, along with 4 different conditions(BMP, Cont, DMSO, LDN), we also have 4 different cell lines(CHLA01R, D425, CHLA01, MB002). We consider those factors in our clustering code below. Let us observe our PCA plot.
+
+```{r, message=FALSE, warning=FALSE}
+
+# Transpose because prcomp expects samples as rows
+logcpm_t <- t(logcpm)
+
+# Run PCA
+pca_result <- prcomp(logcpm_t, scale. = FALSE) 
+
+# Extract PC scores for PC1 and PC2
+pca_df <- data.frame(pca_result$x[,c(1,2)])
+
+# Match each sample to condition
+pca_df$Condition <- metadata$condition
+pca_df$Cell_line <- metadata$cell_line
+
+# Calculate variance explained by each PC
+variance_explained <- summary(pca_result)$importance[2, ] * 100
+
+# Plot PC1 vs PC2
+ggplot(pca_df, aes(PC1, PC2, color = Condition, shape = Cell_line)) +
+  geom_point(size =3) + 
+  labs(title = "PCA of logCPM normalized gene expression",  
+       x = paste0("PC1 (", round(variance_explained[1],1), "%)"),
+    y = paste0("PC2 (", round(variance_explained[2],1), "%)"),)
+
+```
+
+**Figure 1. PCA plot of TMM-normalized log-CPM gene expression across 30 samples. Samples are colored by condition (BMP, Control, DMSO, LDN) and shaped by cell line (CHLA01R, D425, CHLA01, MB002). This plot allows visualization of sample clustering and identification of potential outliers.**
+
+*This code was inspired by [@pca_plot].*
+
+
+**INFERENCE**:
+
+The PCA plot shows that samples generally cluster together, with no obvious outliers, consistent with the findings reported in the original study. Clustering appears to be driven primarily by cell line, and within each cell line, samples further group according to experimental condition. **This hierarchical clustering pattern is important for our further differential expression analysis, particularly for our model design.** Based on these observations, no samples were considered outliers and none were removed.
+
+## Generating a MDS plot
+
+Let us confirm this by generating a MDS plot as well.
+
+```{r, message=FALSE, warning=FALSE}
+# Calculate MDS
+mds_result <- plotMDS(dge, plot = FALSE)
+
+# Extract MDS coordinates
+mds_df <- data.frame(
+  MDS1 = mds_result$x,
+  MDS2 = mds_result$y
+)
+
+# Add sample names as rownames
+rownames(mds_df) <- colnames(dge$counts)
+
+# Add metadata
+mds_df$Condition <- metadata$condition
+mds_df$Cell_line <- metadata$cell_line
+mds_df$sample_id <- rownames(mds_df)
+
+# As edgeR’s plotMDS function does not give variance percentages, I will estimate them using the distances between samples
+
+# Leading logFC dimensions are proportional to the root mean square distances
+var1 <- (sd(mds_df$MDS1)^2) / sum(sd(mds_df$MDS1)^2 + sd(mds_df$MDS2)^2) * 100
+var2 <- (sd(mds_df$MDS2)^2) / sum(sd(mds_df$MDS1)^2 + sd(mds_df$MDS2)^2) * 100
+
+# Plot MDS
+
+ggplot(mds_df, aes(MDS1, MDS2, color = Condition, shape = Cell_line)) +
+  geom_point(size = 3) +
+  labs(title = "MDS Plot of logCPM-normalized gene expression",
+        x = paste0("Leading logFC dimension 1 (", round(var1,1), "%)"),
+        y = paste0("Leading logFC dimension 2 (", round(var2,1), "%)")
+  )  + theme_minimal()
+
+```
+
+**Figure 2. MDS plot of TMM-normalized log-CPM gene expression across 30 samples. Samples are colored by condition (BMP, Control, DMSO, LDN) and shaped by cell line (CHLA01R, D425, CHLA01, MB002). This plot allows visualization of sample clustering and identification of potential outliers.**
+
+*This code was inspired by BCB420: Computational Systems Biology Lectures  [@professor_lectures] and BCB420: Differential Expression Analysis [@professor_notebooks].*
+
+**INFERENCE**:
+
+In the MDS plot we observe the same results as the PCA plot:
+
+1. There are no clear outliers.
+2. Clustering is mainly due to cell line, and within a cell line, samples tend to cluster by condition.
+3. **This hierarchical clustering pattern is important for our further differential expression analysis, particularly for our model design.**
+
+# Normalization
+## Investigating pre-normalization plots
+
+Technical variation caused during sequencing like different sequencing depths,
+batch effects, gene length and GC content biases can affect our read counts.
+Hence, performing normalization is neccessary for reducing technical variation while leaving biological variation intact [@professor_notebooks].
+
+Let us first start, by looking at the distribution of our data.
+
+### Box Plots
+
+Let us first plot our data as a box plot.
+
+```{r, message=FALSE, warning=FALSE}
+
+# Create plot_box function
+plot_box <- function(mat, main = "", ylab = "log2(counts+1)") {
+  df <- as.data.frame(mat)
+  df_long <- df |>
+    mutate(gene = rownames(df)) |>
+    pivot_longer(-gene, names_to = "sample", values_to = "value") |>
+    mutate(value = log2(value + 1))
+
+  # Calculate median of per-sample medians
+  sample_medians <- df_long |>
+    group_by(sample) |>
+    summarize(med = median(value, na.rm = TRUE))
+  overall_median <- median(sample_medians$med)
+  
+  # Plot the data
+  ggplot(df_long, aes(x = sample, y = value)) +
+    geom_boxplot(outlier.size = 0.2) +
+    geom_hline(yintercept = overall_median, 
+               linetype = "dashed", 
+               color = "green", 
+               linewidth = 0.6) +
+    theme_bw() +
+    theme(
+      axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1),
+      plot.caption = element_text(hjust = 0.5)  # Center the caption
+    ) +
+    labs(
+      title = main, 
+      x = "Samples", 
+      y = ylab)
+}
+
+
+
+# Call the function with our dataset.
+plot_box(final_mapped_counts, 
+         main = "Box Plot of Pre-Normalized Data")
+
+
+```
+
+**Figure 3. Boxplot of raw (pre-normalized) gene expression counts for all samples. The y-axis shows log2(counts + 1) values for each sample. The dashed green line represents the median of per-sample medians, providing a reference for overall expression levels.**
+
+*This code was inspired by BCB420: Computational Systems Biology Lectures [@professor_lectures] and BCB420: Normalization rendered notebook [@professor_notebooks].*
+
+
+**INFERENCE**
+
+From our pre-normalized box plot we can infer:
+
+1. The range of log-normalized counts is fairly consistent across samples with some differences.
+2. There are some genes with high expression (as indicated by the black dots).
+3. If we observe the median values per sample (thick black line in each box), it is close to the median value across all samples (green line).
+
+### Density Plots
+Let us plot our data as a density plot.
+
+```{r, message=FALSE, warning=FALSE}
+
+# Create plot_density function
+plot_density <- function(mat, main = "") {
+  df <- as.data.frame(mat)
+  df_long <- df |>
+    mutate(gene = rownames(df)) |>
+    pivot_longer(-gene, names_to = "sample", values_to = "value") |>
+    mutate(value = log2(value + 1))
+  
+  # Plot the data
+  ggplot(df_long, aes(x = value, colour = sample)) +
+    geom_density() +
+    theme_bw() +
+    labs(title = main, x = "log2(counts+1)", y = "Density") +
+    guides(colour = "none")
+}
+
+# Call the function with our dataset.
+plot_density(final_mapped_counts, 
+             main = "Density Plot of Pre-Normalized Data")
+
+```
+
+**Figure 4. Density plot of raw (pre-normalized) gene expression counts across all samples. The x-axis represents values transformed as log2(counts + 1) for each sample. The y-axis represents the probability density of the counts for each sample. Each colour represents a different sample**
+
+*This code was inspired by BCB420: Computational Systems Biology Lectures  [@professor_lectures] and BCB420: Normalization rendered notebook [@professor_notebooks].*
+
+**INFERENCE**
+
+From our pre-normalized density plots we can infer:
+
+1. The peak from ~7 to ~13 indicates that most genes tend to lie in this range.
+2. However, we notice that this data does not seem to be normally distributed, as it seems to be biased towards the left side, instead of a bell shape curve. The distribution does not seem centered.
+
+## Peforming Normalization
+
+**Normalization method used:** 
+Trimmed Mean of M-values (TMM) implemented in the edgeR [@edger] package
+
+**Reasons to use TMM normalization method:** 
+
+1. This method is based on the hypothesis that most genes are not differentially expressed, which aligns with the expectations of our dataset.
+
+2. TMM accounts for library size differences and corrects for composition bias, ensuring that expression comparisons across samples are accurate and not skewed by technical variation [@professor_lectures].
+
+Using edgeR [@edger] we apply normalization to our counts.
+```{r, message=FALSE, warning=FALSE}
+
+# Create a DGEList object from the counts matrix
+dge_obj <- edgeR::DGEList(counts = final_mapped_counts)
+# Calculate normalization factors using the TMM method
+dge_obj <- edgeR::calcNormFactors(dge_obj, method = "TMM")
+
+# Calculate CPM) values from the DGEList
+normalized_counts <- edgeR::cpm(dge_obj)
+
+```
+
+## Investigating post-normalization plots
+
+Now that we have performed normalization, let us revisit our plots.
+
+```{r, message=FALSE, warning=FALSE}
+
+# Create plot_box function
+plot_box <- function(mat, main = "", ylab = "log2(counts+1)") {
+  df <- as.data.frame(mat)
+  df_long <- df |>
+    mutate(gene = rownames(df)) |>
+    pivot_longer(-gene, names_to = "sample", values_to = "value") |>
+    mutate(value = log2(value + 1))
+
+  # Calculate median of per-sample medians
+  sample_medians <- df_long |>
+    group_by(sample) |>
+    summarize(med = median(value, na.rm = TRUE))
+  overall_median <- median(sample_medians$med)
+  
+  # Plot the data
+  ggplot(df_long, aes(x = sample, y = value)) +
+    geom_boxplot(outlier.size = 0.2) +
+    geom_hline(yintercept = overall_median, 
+               linetype = "dashed", 
+               color = "green", 
+               linewidth = 0.6) +
+    theme_bw() +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+    labs(title = main, x = "Sample", y = ylab)
+}
+
+# Call the function with our dataset.
+plot_box(normalized_counts, 
+         main = "Box Plot of Normalized Data")
+
+
+
+```
+
+**Figure 5. Boxplot of normalized gene expression counts for all samples. The y-axis shows log2(counts + 1) values for each sample. The dashed green line represents the median of per-sample medians, providing a reference for overall expression levels.**
+
+**INFERENCE**
+
+By our comparing our post-normalized box plots to our pre-normalized box plots we can infer:
+
+1. The range of log-normalized counts is now consistent across all samples.
+2. The median expression which was previously ~7 has reduced to ~4.
+3. The median values per sample (thick black line in each box), aligns with median value across all samples(green line).
+4. The y-axis ranges changes from ~0-22 to ~0-17.
+
+
+
+```{r, message=FALSE, warning=FALSE}
+
+# Create plot_density function
+plot_density <- function(mat, main = "") {
+  df <- as.data.frame(mat)
+  df_long <- df |>
+    mutate(gene = rownames(df)) |>
+    pivot_longer(-gene, names_to = "sample", values_to = "value") |>
+    mutate(value = log2(value + 1))
+  
+  # Plot the data
+  ggplot(df_long, aes(x = value, colour = sample)) +
+    geom_density() +
+    theme_bw() +
+    labs(title = main, x = "log2(counts+1)", y = "Density") +
+    guides(colour = "none")
+}
+
+# Call it with your data
+plot_density(normalized_counts, 
+             main = "Density Plot of Normalized Data")
+```
+
+**Figure 6. Density plot of normalized gene expression counts across all samples. The x-axis represents values transformed as log2(counts + 1) for each sample. The y-axis represents the probability density of the counts for each sample. Each colour represents a different sample**
+
+**INFERENCE**
+
+By our comparing our post-normalized density plots to our pre-normalized density plots we can infer:
+
+1. There are a large number of low read counts particularly highlighted by the peak around 0 to 3, which was not as prominent in the pre-normalization data.
+2. This can be possibly due to our [**normalization**](#peforming-normalization) followed by log2(counts + 1) transformation in our density plot code, amplifying the noise in the lowly expressed genes. Small changes in these low counts, can become huge changes on this log scale.
+3. Although the MDS plot did not have any outliers, this suggests that maybe having stricter thresholds than the standard workflow of low-level filtering is needed.
+
+# Differential Gene Expression
+
+## Biological Replicates
+
+The dataset comprises of 30 samples spanning four medulloblastoma cell lines (CHLA01, CHLA01R, MB002, and D425) across two primary treatment comparisons. For each treatment condition within a given cell line, three biological replicates were generated, as outlined below.
+
+**BMP7 vs Control**
+
+*3 CHLA01-BMP
+
+*3 CHLA01-Control
+
+*3 CHLA01R-BMP
+
+*3 CHLA01R-Control
+
+*3 MB002-BMP
+
+*3 MB002-Control
+
+*3 D425-BMP
+
+*3 D425-Control
+
+**LDN (BMP signaling inhibitor) treatment vs DMSO**
+
+*3 CHLA01R-LDN
+
+*3 CHLA01R-DMSO
+
+To understand how to handle biological replicates in downstream analyses, let us revisit the [**MDS plot**](#generating-a-mds-plot).
+
+**INFERENCE**
+
+As observed previously, sample clustering is driven primarily by cell line, with samples further segregating by treatment condition within each cell line. Additionally, BMP-treated and control samples form distinct clusters, indicating a clear treatment-associated signal.
+Because cell line identity is a strong source of variation, pooling samples across different cell lines (i.e. analyzing all BMP-treated samples versus all controls without accounting for cell line) would risk identifying genes that reflect intrinsic cell line differences rather than treatment effects. For this reason, I decided not to combine biological replicates across cell lines.
+
+Instead, I focused on the CHLA01 cell line, which exhibits tight clustering of BMP samples and control samples in the MDS plot. Hence, differential expression analysis was restricted to BMP vs control comparisons within the CHLA01 cell line to understand treatment-specific transcriptional changes.
+
+## Biological Coefficient of Variation
+Let us set up our model design based on our choice of factors in the model:
+```{r, message=FALSE, warning=FALSE}
+
+# Focusing on CHLA01 cell line for BMP treated and control groups
+
+# Extract associated metadata
+metadata_for_de <- metadata[metadata$cell_line == "CHLA01" & 
+                             metadata$condition %in% c("BMP","Cont"), c("cell_line", "condition", "GEO_ID")]
+
+# Convert condition to factor with reference as Control
+metadata_for_de$condition <- factor(metadata_for_de$condition, levels = c("Cont", "BMP"))
+
+
+# 0 is Control, 1 is BMP 
+model_design <- model.matrix(~ metadata_for_de$condition)
+
+head(model_design)
+
+```
+
+**Table 10. Design matrix for differential expression analysis in the CHLA01 cell line, coding the treatment condition (Control vs. BMP) for use in linear modeling.**
+
+Next, let us estimate dispersion and plot a Biological Coefficient of Variation (BCV) plot.
+```{r, message=FALSE, warning=FALSE}
+
+# Create DGEList object 
+de_samples_expression <-  final_mapped_counts[, colnames(final_mapped_counts) %in% metadata_for_de$GEO_ID]
+
+dge_obj_for_de <-  DGEList(counts=de_samples_expression, 
+            group=metadata_for_de$condition)
+
+# Estimate dispersion with edgeR 
+dispersion_estimate <- estimateDisp(dge_obj_for_de, model_design)
+
+# Plot Biological coefficient of variation 
+edgeR::plotBCV(dispersion_estimate)
+
+# Adding Title to Plot
+mtext("Dispersion Plot using edgeR of dataset", side = 3, line = 1, cex = 1.25)
+
+```
+
+**Figure 5. Biological coefficient of variation (BCV) plot using edgR. The x-axis represents the gene expression abundance (average log CPM), while the y-axis represents biological variability. Each black point represents a gene, with the common dispersion (red line) indicating overall variability and the trended dispersion (blue line) showing abundance-dependent variation.**
+
+**INFERENCE**
+
+The BCV plot reflects higher dispersion or more variability at low expression levels, with decreasing dispersion as expression increases, which is expected behaviour, as highly expressed genes tend to have more stable and less variable measurements. Most genes cluster around the trend line in blue. The red line which indicates the common dispersion appears relatively low (~0.05), which is reasonable as the experiment uses established cell lines under controlled in vitro conditions, where biological variability is inherently lower than in primary tissues or clinical samples [@BCV_plot].
+
+## Differential Analysis
+
+Using edgeR [@edger] we perform differential analysis, to identify genes whose expression differs in BMP vs Control samples. Let us look at the tagwise differential expression results table generated by the quasi-likelihood (QL) test.
+
+```{r, message=FALSE, warning=FALSE}
+
+# Fit the model (Quasi-likelihood)
+fitted_model <- glmQLFit(dispersion_estimate, model_design)
+
+# Calculate DE 
+qlf_bmp_vs_control <- glmQLFTest(fitted_model)
+
+qlf_output <- topTags(qlf_bmp_vs_control,
+                           sort.by = "PValue",
+                           n = nrow(de_samples_expression))
+
+de_output <- qlf_output$table
+
+# View results
+head(de_output)
+```
+
+**Table 11. Top differentially expressed genes from the quasi-likelihood (QL) test comparing BMP-treated versus Control samples, showing log-fold changes, average expression, and associated p-values.**
+
+Next, we will filter for differentially expressed genes. The standard workflow uses a p-value threshold of 0.05 to identify statistically significant changes [@threshold]. 
+
+```{r, message=FALSE, warning=FALSE}
+
+# Number of DE genes
+length(which(de_output$PValue < 0.05))
+
+```
+
+Using the p-value threshold, we identify 4931 significantly differentially expressed genes in our dataset.
+
+## Multiple Hypothesis Testing
+
+As we are performing many statistical tests simultaneously (one for each gene), this increases the likelihood that some genes will appear statistically significant purely by chance. Without correction, our list of "significant" genes would be dominated by false positives. To address this, let us apply the Benjamini-Hochberg (BH) method to adjust p-values, which controls the false discovery rate (FDR). 
+
+This correction accounts for the number of tests being performed and helps us distinguish true biological signals from random statistical noise. We then assess how many genes meet commonly used significance thresholds of FDR < 0.05 [@BH]
+
+```{r, message=FALSE, warning=FALSE}
+
+## Adjusted p-values for multiple hypothesis testing 
+de_output$p_adj <- p.adjust(de_output$PValue, method = "BH")
+
+# Genes passing threshold
+length(which(de_output$p_adj < 0.05))
+
+```
+After applying both the p-value and FDR thresholds, 2538 genes remain significantly differentially expressed.
+
+
+## Volcano plot 
+
+To visualize the results of differential expression analysis, let us generate a volcano plot and highlight specific genes of biological interest.
+
+```{r, message=FALSE, warning=FALSE}
+
+# Plot differentially expressed genes in a volcano plot 
+
+genes_to_plot <- c("ESYT3", "BAMBI", "FZD7", "ID2", "MDGA1","MYLPF", "ID3", "KCNA1", "PKD2L1", "ID1")
+
+# Plot a volcano plot with annotations
+volcano_df <- de_output %>%  mutate(Status = case_when(
+  logFC > 1 & FDR < 0.05 ~ "Upregulated", 
+  logFC < -1 & FDR < 0.05 ~ "Downregulated",
+  TRUE ~ "Non-significant"
+)) %>% mutate(gene_name = rownames(.))
+
+ggplot(volcano_df, aes(x = logFC, y = -log10(FDR), color = Status)) +
+  geom_point(alpha = 0.6) +
+  scale_color_manual(values = c("Upregulated" = "tomato2", 
+                                "Downregulated" = "cadetblue",
+                                "Non-signficant" = "grey")) +
+  geom_text_repel(
+  data = volcano_df %>% filter(gene_name %in% genes_to_plot),
+  aes(label = gene_name),
+  size = 3,
+  max.overlaps = 20,
+  box.padding = 0.5,
+  point.padding = 0.3,
+  color = "black")  +
+  theme_minimal() + 
+  labs(
+    title = "Volcano Plot: BMP vs Control",
+    x = "log2 fold-change",
+    y = "-log10(p-value)"
+  )
+
+```
+
+**Figure 7. Volcano Plot displaying log2 fold-change on the x-axis and -log10(FDR) on the y-axis. Each point represents a gene, with genes colored according to their expression status: upregulated genes (log2FC > 2 and FDR < 0.05) are shown in red, downregulated genes (log2FC < -2 and FDR < 0.05) in blue, and non-significant genes in grey. **
+
+**INFERENCE**
+
+There appears to be more upregulated genes than downregulated genes, and the upregulated genes show higher fold-changes, while downregulated genes are more modest. 
+Genes ID1, ID2 and ID3 are highly up-regulated, and are a well-established target of BMP signaling [@ID3].
+
+## Heatmap
+
+To visualize the expression patterns of the most significantly differentially expressed genes, let us generate a heatmap using the top 25 genes with the strongest signal (absolute log2 fold change > 1 and FDR < 0.05).
+  
+```{r, message=FALSE, warning=FALSE}
+
+# logCPM from counts for visualization
+# logCPM for visualization
+logcpm <- edgeR::cpm(de_samples_expression, log = TRUE, prior.count = 1)
+
+# Keep only genes present in the expression matrix
+top_hits <- volcano_df[volcano_df$p_adj < 0.05 & abs(volcano_df$logFC) > 1,] %>% slice_head(n = 25)
+top_hits <- rownames(top_hits)
+
+heatmap_matrix <- logcpm[top_hits, ]
+
+# If duplicated HGNC symbols, make rownames unique 
+if (any(duplicated(rownames(heatmap_matrix)))) {
+  rownames(heatmap_matrix) <- make.unique(hm_labels)
+}
+
+# Z-score per gene across samples for pattern visibility
+heatmap_matrix_z <- t(scale(t(heatmap_matrix)))
+
+
+annotation_cols <- data.frame(Condition = metadata_for_de$condition,
+                              row.names = colnames(heatmap_matrix_z))
+  
+pheatmap(
+  heatmap_matrix_z,  scale = "none", 
+  color = colorRampPalette(c("blue", "white", "red"))(100),
+  cluster_rows = TRUE,
+  cluster_cols = TRUE,
+  annotation_col = annotation_cols,
+  show_rownames = TRUE,
+  main = "Heatmap of top 25 DE Genes in BMP7 vs Control"
+)
+```
+
+**Figure 8. Heatmap of the top 25 differentially expressed genes with the strongest signal (absolute log2 fold change > 1 and FDR < 0.05) in BMP7-treated versus control medulloblastoma cells. Expression values are shown as scaled Z-scores (red = high expression, blue = low expression). **
+
+**INFERENCE**
+
+1. **Strong clustering by condition: ** We observe strong clustering by condition by the clear separation between BMP7-treated (BMP, pink annotation) and control (Cont, cyan annotation) samples.
+
+2. **Clear separation of gene expression patterns:** The top 25 DE genes show a clean distinction. Genes are either strongly upregulated in BMP-treated samples (red clusters) or strongly downregulated (blueclusters). There's minimal intermediate expression, suggesting these are strongly regulated genes.
+
+3. **Reproducibility: ** Within each condition, the three replicates show very similar expression patterns as seen by the vertical consistency within BMP and Control groups, highlighting good experimental reproducibility.
+
+*This code was inspired by BCB420: "Differential Expression" rendered notebook [@professor_notebooks].*
+
+Hence our conditions cluster together, as the top 25 differentially expressed genes show consistent and opposing expression patterns between BMP-treated and control samples. By selecting genes with the largest expression differences between conditions, we have chosen features that maximize separation between groups. BMP samples uniformly upregulate one set of genes while downregulating another, and control samples show the opposite pattern.
+
+# Final Coverage
+Let us analyze the final coverage of our dataset.
+
+```{r, message=FALSE, warning=FALSE}
+nrow(normalized_counts)
+
+```
+The final coverage of the dataset is `17462` genes across 30 samples.
+
+# Conclusion
+
+Our report successfully analyzed bulk RNA-sequencing data from BMP7-treated medulloblastoma cells, reducing the initial dataset from 66,023 genes to a final coverage of 17,462 well-expressed, uniquely mapped genes across 30 samples. 
+
+Following TMM normalization and quality control, differential expression analysis between BMP7-treated and control CHLA01 cells identified 2,538 significantly differentially expressed genes (FDR < 0.05). Canonical BMP signaling targets ID1, ID2, and ID3 showed strong upregulation, validating pathway activation. The perfect clustering of biological replicates by treatment condition in both PCA/MDS plots and the heatmap of top 25 differentially expressed genes demonstrates robust and reproducible transcriptional responses to BMP7 signaling. 
+
+# Interpret, and Document
+
+The following questions are related to the Content rubric of Assignment 1. These questions are linked to relevant sections from the assignment.
+
+[**Why is the dataset of interest to you?**](#selecting-an-appropriate-dataset)
+
+[**What are the control and test conditions of the dataset?**](#experimental-design)
+
+[**How many samples in each of the conditions of your dataset?**](#experimental-design)
+
+[**Were there expression values that were not unique for specific genes? How did you handle these?**](#handling-duplicates)
+
+[**Were there expression values that could not be mapped to current HUGO symbols?**](#identifier-mapping)
+
+[**Were there any outliers in your dataset? How were they handled in the originating paper? How many outliers were removed?**](#outlier-detection)
+
+[**How did you handle replicates?**](#biological-replicates)
+
+[**What is the final coverage of your dataset?**](#final-coverage)
+
+# Journal Documentation
+
+Link to my [Wiki](https://github.com/bcb420-2026/Tanaya_Datar/wiki) with four Assignment-1 related documentation pages.
+
+# References

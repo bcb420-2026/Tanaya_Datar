@@ -1,6 +1,5 @@
 ---
-title: "BCB420H1 Assignment 1"
-subtitle: "Data Analysis of Bulk RNA-Sequencing Data from BMP7-Treated Medulloblastoma Cells"
+title: "Data Analysis of Bulk RNA-Sequencing Data from BMP7-Treated Medulloblastoma Cells"
 author: "Tanaya Datar"
 date: "02-10-2026"
 output: 
@@ -368,8 +367,11 @@ Let us try to perform identifier mapping on our dataset using the current biomaR
 ```{r, message=FALSE, warning=FALSE}
 
 # Loading the correct database with increased timeout
-ensembl <- biomaRt::useMart("ensembl", 
-                            host = "https://www.ensembl.org")
+ensembl <- useEnsembl(
+    biomart = "genes",
+    dataset = "hsapiens_gene_ensembl",
+    mirror = "useast"
+)
 
 # We want to query for human genes only
 ensembl <- biomaRt::useDataset("hsapiens_gene_ensembl", mart = ensembl)

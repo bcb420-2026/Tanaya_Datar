@@ -1,6 +1,5 @@
 ---
-title: "BCB420H1 Assignment 2"
-subtitle: "Pathway and Network Analysis of Bulk RNA-Sequencing Data from BMP7-Treated Medulloblastoma Cells"
+title: "Pathway and Network Analysis of Bulk RNA-Sequencing Data from BMP7-Treated Medulloblastoma Cells"
 author: "Tanaya Datar"
 date: "03-10-2026"
 output: 
